@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gelatik Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <!-- Chart.js versi tetap agar API stabil -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+  <!-- ═══ NAVBAR ═══ -->
+  <nav class="navbar">
+    <div class="nav-brand">
+      <img
+        src="{{ url_for('static', filename='logo gelatik (2).png') }}"
+        alt="Gelatik"
+        class="nav-logo"
+        onerror="this.style.display='none';document.getElementById('nav-brand-fallback').style.display='block'"
+      />
+      <span id="nav-brand-fallback" style="display:none;font-weight:800;font-size:17px;color:#E91E8C;letter-spacing:-.3px;">Gelatik</span>
+    </div>
+    <div class="nav-links">
+      <a href="#" class="nav-link active" onclick="showSection('main',this);return false;">Main</a>
+      <a href="#" class="nav-link"        onclick="showSection('area',this);return false;">Area</a>
+    </div>
+  </nav>
+
+  <main class="main-content">
+
+    {%- with messages = get_flashed_messages(with_categories=true) %}
+      {%- if messages %}
+      <div class="flash-container">
+        {%- for category, message in messages %}
+        <div class="flash flash-{{ category }}">
+          <span class="flash-msg">{{ message }}</span>
+          <button class="flash-close" onclick="this.parentElement.remove()">✕</button>
+        </div>
+        {%- endfor %}
+      </div>
+      {%- endif %}
+    {%- endwith %}
+
+    <!-- ══ SECTION MAIN ══ -->
+    <div id="section-main">
+
+      <!-- ═══ SUMMARY CARD ═══ -->
+      <section class="card summary-card">
+        <div class="watermark">
+          <img src="{{ url_for('static', filename='logo gelatik (2).png') }}" alt="" />
+        </div>
+
+        <div class="summary-actions">
+          <a href="/export" class="btn btn-green" onclick="btnFeedback(this,'⏳ Menyiapkan…',2000)">
+            ⬇ Export Data
+          </a>
+          <button class="btn btn-outline" onclick="doRecluster(this)">
+            🔄 Re-Cluster
+          </button>
+          <form action="/import" method="POST" enctype="multipart/form-data"
+                class="form-inline" id="importForm">
+            <label for="fileInput" class="btn btn-green">⬆ Import File</label>
+            <input type="file" id="fileInput" name="file"
+                   accept=".csv,.xlsx,.xls"
+                   onchange="handleImport(this)" hidden />
+          </form>
+        </div>
+
+        <!-- Filter Role (MD MIX / MD MM / MD REG) -->
+        <div class="role-filter-bar" id="roleFilterBar">
+          <span class="role-filter-label">Filter Role:</span>
+          <button class="role-btn active" data-role="all"    onclick="filterByRole(this)">Semua</button>
+          <button class="role-btn"        data-role="MD MIX" onclick="filterByRole(this)">MD MIX</button>
+          <button class="role-btn"        data-role="MD MM"  onclick="filterByRole(this)">MD MM</button>
+          <button class="role-btn"        data-role="MD REG" onclick="filterByRole(this)">MD REG</button>
+          <span class="role-filter-count" id="roleFilterCount"></span>
+        </div>
+
+        <div class="summary-body">
+          <div class="donut-wrap">
+            <canvas id="donutChart"></canvas>
+            <div class="donut-center">
+              {%- set ns = namespace(tot=0) -%}
+              {%- for s in cluster_sections -%}{%- set ns.tot = ns.tot + s.count -%}{%- endfor -%}
+              <span class="donut-num">{{ ns.tot }}</span>
+              <span class="donut-label">Total</span>
+            </div>
+          </div>
+
+          <div class="summary-right">
+            <div class="legend-list">
+              {%- for s in cluster_sections %}
+              <div class="legend-row">
+                <span class="leg-dot" style="background:{{ s.dot_color }}"></span>
+                <span>{{ s.title }} = <strong>{{ s.count }}</strong></span>
+              </div>
+              {%- endfor %}
+            </div>
+
+            <div class="info-list">
+              <div class="info-row"><span class="ik">Area</span><span class="is">=</span><span class="iv">{{ area }}</span></div>
+              <div class="info-row"><span class="ik">Total Store Visit</span><span class="is">=</span><span class="iv">{{ total_store_visit | int }}</span></div>
+              <div class="info-row"><span class="ik">FIFO/FEFO Compliance</span><span class="is">=</span><span class="iv">{{ fifo_avg }}%</span></div>
+              <div class="info-row"><span class="ik">Price Tag Compliance</span><span class="is">=</span><span class="iv">{{ price_avg }}%</span></div>
+              <div class="info-row"><span class="ik">Facing Compliance</span><span class="is">=</span><span class="iv">{{ facing_avg }}%</span></div>
+              <div class="info-row">
+                <span class="ik">K Optimal (K-Means)</span><span class="is">=</span>
+                <span class="iv">k = {{ best_k }}&nbsp;<span class="k-auto">Auto</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Calinski-Harabasz dihapus -->
+        <div class="eval-bar">
+          <span class="eval-item"><span class="eval-label">Silhouette</span><span class="eval-val">{{ sil_score }}</span></span>
+          <span class="eval-sep">|</span>
+          <span class="eval-item"><span class="eval-label">Davies-Bouldin</span><span class="eval-val">{{ dbi_score }}</span></span>
+        </div>
+      </section>
+
+      <!-- ═══ CLUSTER TABLES ═══ -->
+      {%- for sec in cluster_sections %}
+      <section class="card table-card">
+
+        <div class="tier-header">
+          <h2 class="sec-title" style="color:{{ sec.title_color }}">{{ sec.title }}</h2>
+          <span class="tier-badge"
+                style="background:{{ sec.dot_color }}20;color:{{ sec.title_color }};border:1.5px solid {{ sec.dot_color }}">
+            {{ sec.count }} karyawan
+          </span>
+        </div>
+
+        <div class="interp-row">
+          <div class="interp-chip"><span class="chip-icon"></span><span>Visit: <b>{{ sec.avg.visit }}</b> ({{ sec.interp.visit }})</span></div>
+          <div class="interp-chip"><span class="chip-icon"></span><span>Facing: <b>{{ sec.avg.facing }}%</b> ({{ sec.interp.facing }})</span></div>
+          <div class="interp-chip"><span class="chip-icon"></span><span>FIFO/FEFO: <b>{{ sec.avg.fifo }}%</b> ({{ sec.interp.fifo }})</span></div>
+          <div class="interp-chip"><span class="chip-icon"></span><span>Price Tag: <b>{{ sec.avg.price_tag }}%</b> ({{ sec.interp.price_tag }})</span></div>
+        </div>
+
+        <div class="tbl-scroll">
+          <table class="perf-table" id="tbl-{{ sec.cls }}">
+            <thead>
+              <tr>
+                <th>Nama</th><th>Role</th><th>Area</th><th>Report Product</th>
+                <th>Facing</th><th>FIFO/FEFO</th><th>Price Tag</th><th>Silhouette</th>
+              </tr>
+            </thead>
+            <tbody>
+              {%- if sec.data %}
+                {%- for row in sec.data %}
+                <tr data-i="{{ loop.index }}"
+                    data-role="{{ row.role }}">
+                  <td class="td-name nama-popup-trigger"
+                      data-nama="{{ row.nama }}"
+                      data-role="{{ row.role }}"
+                      data-stores='{{ row.stores | tojson }}'>
+                    {{ row.nama }}
+                  </td>
+                  <td><span class="role-tag role-{{ row.role | replace(' ','_') | lower }}">{{ row.role }}</span></td>
+                  <td><span class="area-tag">{{ row.area }}</span></td>
+                  <td>{{ row.work_rate }}%</td>
+                  <td>{{ row.facing }}%</td>
+                  <td>{{ row.fifo }}%</td>
+                  <td>{{ row.price_tag }}%</td>
+                  <td>
+                    <span class="sil-badge{%- if row.sil >= 0.5 %} sil-good{%- elif row.sil >= 0.25 %} sil-ok{%- else %} sil-bad{%- endif %}">
+                      {{ row.sil }}
+                    </span>
+                  </td>
+                </tr>
+                {%- endfor %}
+              {%- else %}
+                <tr><td colspan="8" class="td-empty">Tidak ada data untuk tier ini</td></tr>
+              {%- endif %}
+            </tbody>
+          </table>
+        </div>
+
+        {%- if sec.data | length > 5 %}
+        <div class="more-wrap">
+          <button class="btn-more" id="btn-{{ sec.cls }}"
+                  data-cls="{{ sec.cls }}" data-total="{{ sec.data|length }}"
+                  data-expanded="0" onclick="toggleRows(this)">
+            Lihat semua {{ sec.data|length }} karyawan ▼
+          </button>
+        </div>
+        <p class="row-ctr" id="ctr-{{ sec.cls }}">Menampilkan 5 dari {{ sec.data|length }} karyawan</p>
+        {%- endif %}
+
+      </section>
+      {%- endfor %}
+
+    </div><!-- /#section-main -->
+
+    <!-- ══ SECTION AREA ══ -->
+    <div id="section-area" style="display:none">
+
+      <!-- Filter card -->
+      <section class="card area-filter-card" style="overflow:visible;position:relative;">
+        <div class="watermark"><img src="{{ url_for('static', filename='logo gelatik (2).png') }}" alt="" /></div>
+        <h2 class="area-filter-title">Filter Karyawan per Area</h2>
+        <p class="area-filter-sub">Pilih area untuk melihat daftar karyawan yang ditugaskan beserta tier performanya.</p>
+        <div class="area-search-wrap">
+          <div class="area-search-box">
+            <span class="area-search-icon">🔍</span>
+            <input type="text" id="areaSearchInput" class="area-search-input"
+                   placeholder="Cari atau pilih area…"
+                   oninput="filterAreaDropdown(this.value)"
+                   onfocus="openAreaDropdown()"
+                   autocomplete="off" />
+            <button class="area-search-clear" id="areaSearchClear"
+                    onclick="clearAreaSearch()" style="display:none">✕</button>
+          </div>
+          <div class="area-dropdown" id="areaDropdown"></div>
+        </div>
+        <div class="area-chips" id="areaChips" style="display:none">
+          <span class="area-chip-label">Area dipilih:</span>
+          <span class="area-chip-val" id="areaChipText"></span>
+          <button class="area-chip-clear" onclick="clearAreaSearch()">✕ Reset</button>
+        </div>
+      </section>
+
+      <!-- Chart card -->
+      <section class="card" id="areaChartCard" style="display:none">
+        <h3 style="font-size:1rem;font-weight:700;color:#1a1a2e;margin:0 0 4px;">
+          Distribusi Karyawan — <span id="areaChartLabel" style="color:#E91E8C;"></span>
+        </h3>
+        <p style="font-size:12px;color:#888;margin:0 0 16px;">Report Product, Facing, FIFO/FEFO, dan Price Tag per karyawan</p>
+        <div style="position:relative;width:100%;height:340px;">
+          <canvas id="areaBarChart"></canvas>
+        </div>
+        <div id="areaChartStats" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;"></div>
+      </section>
+
+      <!-- Tabel hasil per tier -->
+      <div id="areaResults">
+        {%- for sec in cluster_sections %}
+        <section class="card table-card area-result-section"
+                 id="area-sec-{{ sec.cls }}" style="display:none"
+                 data-tier="{{ sec.cls }}">
+
+          <div class="tier-header">
+            <h2 class="sec-title" style="color:{{ sec.title_color }}">{{ sec.title }}</h2>
+            <span class="tier-badge area-result-badge"
+                  id="area-badge-{{ sec.cls }}"
+                  style="background:{{ sec.dot_color }}20;color:{{ sec.title_color }};border:1.5px solid {{ sec.dot_color }}">
+            </span>
+          </div>
+
+          <div class="tbl-scroll">
+            <table class="perf-table" id="area-tbl-{{ sec.cls }}">
+              <thead>
+                <tr>
+                  <th>Nama</th><th>Area</th><th>Region</th><th>Report Product</th>
+                  <th>Facing</th><th>FIFO/FEFO</th><th>Price Tag</th><th>Silhouette</th>
+                </tr>
+              </thead>
+              <tbody id="area-tbody-{{ sec.cls }}">
+                <!-- diisi JS -->
+              </tbody>
+            </table>
+          </div>
+        </section>
+        {%- endfor %}
+
+        <div class="area-placeholder" id="areaPlaceholder">
+          <div class="area-placeholder-inner">
+            <span class="area-placeholder-icon">🗺️</span>
+            <p>Pilih area untuk menampilkan karyawan</p>
+          </div>
+        </div>
+        <div class="area-empty" id="areaEmpty" style="display:none">
+          <span>Tidak ada karyawan ditemukan untuk area ini.</span>
+        </div>
+      </div>
+
+    </div><!-- /#section-area -->
+
+  </main>
+
+  <!-- ═══ POPUP MODAL ═══ -->
+  <div id="popupOverlay" class="popup-overlay" onclick="closePopup()">
+    <div class="popup-card" onclick="event.stopPropagation()">
+      <div class="popup-header">
+        <div>
+          <h3 class="popup-nama" id="popupNama"></h3>
+          <span class="popup-role" id="popupRole"></span>
+        </div>
+        <button class="popup-close" onclick="closePopup()">✕</button>
+      </div>
+      <div class="popup-body">
+        <p class="popup-section-title">🏪 Store yang Dikunjungi</p>
+        <div id="popupStores" class="popup-stores"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ DATA KARYAWAN (embedded JSON untuk filter area) ═══ -->
+  <script>
+    const ALL_EMPLOYEES = [
+      {%- for sec in cluster_sections %}
+        {%- for row in sec.data %}
+        {
+          tier      : {{ sec.cls       | tojson }},
+          tierTitle : {{ sec.title     | tojson }},
+          titleColor: {{ sec.title_color | tojson }},
+          barColor  : {{ sec.bar_color | tojson }},
+          dotColor  : {{ sec.dot_color | tojson }},
+          nama      : {{ row.nama      | tojson }},
+          role      : {{ row.role      | tojson }},
+          area      : {{ row.area      | tojson }},
+          region    : {{ row.region    | tojson }},
+          stores    : {{ row.stores    | tojson }},
+          work_rate : {{ row.work_rate }},
+          facing    : {{ row.facing }},
+          fifo      : {{ row.fifo }},
+          price_tag : {{ row.price_tag }},
+          sil       : {{ row.sil }},
+        },
+        {%- endfor %}
+      {%- endfor %}
+    ];
+
+    /* Lookup tables — diisi dari data di atas */
+    const ALL_AREAS   = [...new Set(ALL_EMPLOYEES.map(e => e.area))]
+                          .filter(a => a && a !== '-').sort();
+    const TIER_COLORS = {};   // barColor per tier
+    const TIER_DOT    = {};   // dotColor per tier
+    const TIER_TITLES = {};   // tierTitle per tier
+    const TIER_ORDER  = [];   // urutan tier sesuai cluster_sections
+
+    ALL_EMPLOYEES.forEach(e => {
+      if (!TIER_COLORS[e.tier]) {
+        TIER_COLORS[e.tier] = e.barColor;
+        TIER_DOT[e.tier]    = e.dotColor;
+        TIER_TITLES[e.tier] = e.tierTitle;
+        TIER_ORDER.push(e.tier);
+      }
+    });
+    // deduplicate TIER_ORDER
+    const _seen = new Set();
+    for (let i = TIER_ORDER.length - 1; i >= 0; i--) {
+      if (_seen.has(TIER_ORDER[i])) { TIER_ORDER.splice(i,1); }
+      else { _seen.add(TIER_ORDER[i]); }
+    }
+  </script>
+
+  <script>
+    /* ══ NAVBAR ══ */
+    function showSection(name, el) {
+      document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+      if (el) el.classList.add('active');
+      document.getElementById('section-main').style.display = name === 'main' ? '' : 'none';
+      document.getElementById('section-area').style.display = name === 'area' ? '' : 'none';
+      if (name === 'area') buildAreaDropdown();
+    }
+
+    /* ══ DONUT ══ */
+    new Chart(document.getElementById('donutChart'), {
+      type: 'doughnut',
+      data: {
+        labels: {{ chart_labels | tojson }},
+        datasets: [{ data: {{ chart_data | tojson }},
+          backgroundColor: {{ chart_colors | tojson }},
+          borderWidth: 3, borderColor: '#fff', hoverOffset: 8 }]
+      },
+      options: { cutout: '60%',
+        plugins: { legend: { display: false },
+          tooltip: { callbacks: { label: c => ` ${c.label}: ${c.parsed}` } } },
+        animation: { animateRotate: true, duration: 900 } }
+    });
+
+    /* ══ HIDE baris > 5 di main ══ */
+    document.querySelectorAll('.perf-table tbody tr[data-i]').forEach(r => {
+      if (+r.dataset.i > 5) r.style.display = 'none';
+    });
+    function toggleRows(btn) {
+      const cls = btn.dataset.cls, tot = +btn.dataset.total;
+      const exp = btn.dataset.expanded === '1';
+      const rows = document.querySelectorAll(`#tbl-${cls} tbody tr[data-i]`);
+      const ctr  = document.getElementById(`ctr-${cls}`);
+      if (!exp) {
+        rows.forEach(r => r.style.display = '');
+        btn.textContent = 'Sembunyikan ▲'; btn.dataset.expanded = '1';
+        if (ctr) ctr.textContent = `Menampilkan ${tot} dari ${tot} karyawan`;
+      } else {
+        rows.forEach(r => r.style.display = +r.dataset.i > 5 ? 'none' : '');
+        btn.textContent = `Lihat semua ${tot} karyawan ▼`; btn.dataset.expanded = '0';
+        if (ctr) ctr.textContent = `Menampilkan 5 dari ${tot} karyawan`;
+      }
+    }
+
+    /* ══ AREA DROPDOWN ══ */
+    let dropdownBuilt = false;
+    let chartInst     = null;
+
+    function buildAreaDropdown() {
+      if (dropdownBuilt) return;
+      dropdownBuilt = true;
+      const dd = document.getElementById('areaDropdown');
+      dd.innerHTML = ALL_AREAS.map(a =>
+        `<div class="area-dd-item" data-area="${a.replace(/&/g,'&amp;').replace(/"/g,'&quot;')}">${a}</div>`
+      ).join('');
+      dd.addEventListener('click', e => {
+        const item = e.target.closest('.area-dd-item');
+        if (item) selectArea(item.dataset.area);
+      });
+    }
+
+    function openAreaDropdown() {
+      buildAreaDropdown();
+      document.getElementById('areaDropdown').classList.add('open');
+    }
+
+    function filterAreaDropdown(val) {
+      buildAreaDropdown();
+      document.getElementById('areaDropdown').classList.add('open');
+      const q = val.trim().toLowerCase();
+      document.querySelectorAll('.area-dd-item').forEach(item => {
+        item.style.display = item.textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+      document.getElementById('areaSearchClear').style.display = val ? '' : 'none';
+    }
+
+    function selectArea(area) {
+      document.getElementById('areaSearchInput').value = area;
+      document.getElementById('areaDropdown').classList.remove('open');
+      document.getElementById('areaSearchClear').style.display = '';
+      const chips = document.getElementById('areaChips');
+      chips.style.display = '';
+      document.getElementById('areaChipText').textContent = area;
+      renderAreaResults(area);
+    }
+
+    function clearAreaSearch() {
+      document.getElementById('areaSearchInput').value = '';
+      document.getElementById('areaSearchClear').style.display = 'none';
+      document.getElementById('areaChips').style.display = 'none';
+      document.getElementById('areaDropdown').classList.remove('open');
+      document.querySelectorAll('.area-result-section').forEach(s => s.style.display = 'none');
+      document.getElementById('areaPlaceholder').style.display = '';
+      document.getElementById('areaEmpty').style.display = 'none';
+      document.getElementById('areaChartCard').style.display = 'none';
+      if (chartInst) { chartInst.destroy(); chartInst = null; }
+    }
+
+    document.addEventListener('click', e => {
+      if (!e.target.closest('.area-search-wrap'))
+        document.getElementById('areaDropdown')?.classList.remove('open');
+    });
+
+    /* ══ RENDER AREA ══ */
+    function silClass(v) {
+      return v >= 0.5 ? 'sil-good' : v >= 0.25 ? 'sil-ok' : 'sil-bad';
+    }
+
+    function renderAreaResults(area) {
+      /* filter karyawan sesuai area */
+      const employees = ALL_EMPLOYEES.filter(e =>
+        e.area.toLowerCase() === area.toLowerCase()
+      );
+
+      /* reset */
+      document.querySelectorAll('.area-result-section').forEach(s => s.style.display = 'none');
+      document.getElementById('areaPlaceholder').style.display = 'none';
+      document.getElementById('areaEmpty').style.display       = 'none';
+      document.getElementById('areaChartCard').style.display   = 'none';
+      if (chartInst) { chartInst.destroy(); chartInst = null; }
+
+      if (!employees.length) {
+        document.getElementById('areaEmpty').style.display = ''; return;
+      }
+
+      /* ══ CHART ══ */
+      document.getElementById('areaChartLabel').textContent = area;
+      document.getElementById('areaChartCard').style.display = '';
+
+      /* urutkan work_rate desc, potong nama panjang */
+      const sorted = [...employees].sort((a, b) => b.work_rate - a.work_rate);
+      const labels = sorted.map(e => e.nama.length > 16 ? e.nama.slice(0, 15) + '…' : e.nama);
+
+      /* warna bar sesuai tier masing-masing karyawan */
+      const dotColors = sorted.map(e => TIER_DOT[e.tier] || '#aaa');
+      const bgColors  = dotColors.map(c => c + 'BB');
+
+      const canvas = document.getElementById('areaBarChart');
+      /* paksa canvas punya ukuran sebelum Chart.js init */
+      canvas.style.width  = '100%';
+      canvas.style.height = '100%';
+
+      chartInst = new Chart(canvas, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'Report Product (%)',
+              data: sorted.map(e => e.work_rate),
+              backgroundColor: bgColors,
+              borderColor: dotColors,
+              borderWidth: 1.5,
+              borderRadius: 5,
+              order: 1,
+            },
+            {
+              label: 'FIFO/FEFO (%)',
+              data: sorted.map(e => e.fifo),
+              type: 'line',
+              borderColor: '#22c55e',
+              backgroundColor: 'transparent',
+              pointBackgroundColor: '#22c55e',
+              pointBorderColor: '#fff',
+              pointBorderWidth: 1.5,
+              pointRadius: 5,
+              tension: 0.3,
+              order: 0,
+            },
+            {
+              label: 'Price Tag (%)',
+              data: sorted.map(e => e.price_tag),
+              type: 'line',
+              borderColor: '#E91E8C',
+              backgroundColor: 'transparent',
+              pointBackgroundColor: '#E91E8C',
+              pointBorderColor: '#fff',
+              pointBorderWidth: 1.5,
+              pointRadius: 5,
+              tension: 0.3,
+              order: 0,
+            },
+            {
+              label: 'Facing (%)',
+              data: sorted.map(e => Math.min(e.facing, 200)),
+              type: 'line',
+              borderColor: '#f97316',
+              backgroundColor: 'transparent',
+              pointBackgroundColor: '#f97316',
+              pointBorderColor: '#fff',
+              pointBorderWidth: 1.5,
+              pointRadius: 5,
+              tension: 0.3,
+              borderDash: [4, 3],
+              order: 0,
+            },
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: {
+                font: { family: "'Plus Jakarta Sans', sans-serif", size: 11 },
+                padding: 14, usePointStyle: true, pointStyleWidth: 10,
+              }
+            },
+            tooltip: {
+              callbacks: {
+                label: ctx => ' ' + ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(1) + '%'
+              }
+            }
+          },
+          scales: {
+            x: {
+              ticks: {
+                font: { family: "'Plus Jakarta Sans', sans-serif", size: 10, weight: '600' },
+                maxRotation: 35, minRotation: 0,
+              },
+              grid: { display: false }
+            },
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: v => v + '%',
+                font: { family: "'Plus Jakarta Sans', sans-serif", size: 11 },
+              },
+              grid: { color: '#f0e4ec' }
+            }
+          }
+        }
+      });
+
+      /* stat pills per tier */
+      const byTier = {};
+      employees.forEach(e => {
+        if (!byTier[e.tier]) byTier[e.tier] = [];
+        byTier[e.tier].push(e);
+      });
+      const avg = (arr, key) => (arr.reduce((s,r) => s + r[key], 0) / arr.length).toFixed(1);
+      document.getElementById('areaChartStats').innerHTML =
+        TIER_ORDER.filter(t => byTier[t]).map(t => {
+          const rows = byTier[t], color = TIER_DOT[t] || '#aaa';
+          return `<div class="area-stat-pill" style="border-color:${color}40;background:${color}12">
+            <span class="area-stat-dot" style="background:${color}"></span>
+            <span class="area-stat-tier">${TIER_TITLES[t] || t}</span>
+            <strong>${rows.length} karyawan</strong>
+            <span class="area-stat-sep">·</span>
+            <span>RP ${avg(rows,'work_rate')}%</span>
+            <span class="area-stat-sep">·</span>
+            <span>FIFO ${avg(rows,'fifo')}%</span>
+            <span class="area-stat-sep">·</span>
+            <span>PT ${avg(rows,'price_tag')}%</span>
+          </div>`;
+        }).join('');
+
+      /* ══ TABEL per tier ══ */
+      Object.entries(byTier).forEach(([tier, rows]) => {
+        const sec   = document.getElementById('area-sec-' + tier);
+        const tbody = document.getElementById('area-tbody-' + tier);
+        const badge = document.getElementById('area-badge-' + tier);
+        if (!sec || !tbody) return;
+        badge.textContent = rows.length + ' karyawan';
+        tbody.innerHTML = rows
+          .sort((a, b) => b.work_rate - a.work_rate)
+          .map(r => `<tr>
+            <td class="td-name">${r.nama}</td>
+            <td><span class="area-tag">${r.area}</span></td>
+            <td><span class="region-tag">${r.region}</span></td>
+            <td>${r.work_rate}%</td>
+            <td>${r.facing}%</td>
+            <td>${r.fifo}%</td>
+            <td>${r.price_tag}%</td>
+            <td><span class="sil-badge ${silClass(r.sil)}">${r.sil}</span></td>
+          </tr>`).join('');
+        sec.style.display = '';
+      });
+    }
+
+    /* ══ RE-CLUSTER ══ */
+    function doRecluster(btn) {
+      if (!confirm('Re-run clustering dari Report_Clean.xlsx?\nProses ini akan memperbarui seluruh data.')) return;
+      btn.disabled = true; btn.textContent = '⏳ Memulai…';
+      fetch('/recluster', { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(() => window.location.href = '/')
+        .catch(() => window.location.href = '/');
+    }
+
+    function handleImport(input) {
+      if (!input.files || !input.files.length) return;
+      const name = input.files[0].name.toLowerCase();
+      if (!name.endsWith('.csv') && !name.endsWith('.xlsx') && !name.endsWith('.xls')) {
+        alert('Pilih file berformat .csv, .xlsx, atau .xls');
+        input.value = ''; return;
+      }
+      document.getElementById('importForm').submit();
+    }
+
+    function btnFeedback(btn, text, delay) {
+      const orig = btn.textContent;
+      btn.textContent = text; btn.style.opacity = '0.7';
+      setTimeout(() => { btn.textContent = orig; btn.style.opacity = '1'; }, delay);
+      return true;
+    }
+
+    document.querySelectorAll('.flash').forEach(el => {
+      setTimeout(() => {
+        el.style.transition = 'opacity 0.4s'; el.style.opacity = '0';
+        setTimeout(() => el.remove(), 400);
+      }, 5000);
+    });
+
+    /* ══ FILTER ROLE ══ */
+    let currentRoleFilter = 'all';
+
+    function filterByRole(btn) {
+      currentRoleFilter = btn.dataset.role;
+
+      // Update tombol aktif
+      document.querySelectorAll('.role-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      // Tandai setiap baris apakah match filter
+      document.querySelectorAll('.perf-table tbody tr[data-i]').forEach(tr => {
+        const trRole = (tr.dataset.role || '').trim();
+        tr.dataset.roleMatch = (currentRoleFilter === 'all' || trRole === currentRoleFilter) ? '1' : '0';
+      });
+
+      // Re-apply visibility: tampilkan semua baris yang match
+      // (abaikan batas 5 baris saat filter aktif, agar karyawan terfilter langsung terlihat)
+      document.querySelectorAll('.perf-table').forEach(table => {
+        const cls     = table.id.replace('tbl-', '');
+        const btn2    = document.getElementById('btn-' + cls);
+        const ctr2    = document.getElementById('ctr-' + cls);
+        const rows    = table.querySelectorAll('tbody tr[data-i]');
+        const matched = [...rows].filter(r => r.dataset.roleMatch === '1');
+        const total   = rows.length;
+
+        if (currentRoleFilter === 'all') {
+          // Reset ke state awal: 5 baris
+          rows.forEach(r => r.style.display = +r.dataset.i <= 5 ? '' : 'none');
+          if (btn2) { btn2.textContent = 'Lihat semua ' + total + ' karyawan ▼'; btn2.dataset.expanded = '0'; btn2.style.display = total > 5 ? '' : 'none'; }
+          if (ctr2) ctr2.textContent = total > 5 ? 'Menampilkan 5 dari ' + total + ' karyawan' : '';
+        } else {
+          // Tampilkan hanya yang match, sembunyikan yang tidak match
+          rows.forEach(r => r.style.display = r.dataset.roleMatch === '1' ? '' : 'none');
+          if (btn2) btn2.style.display = 'none';   // sembunyikan tombol lihat semua
+          if (ctr2) ctr2.textContent = matched.length > 0
+            ? 'Menampilkan ' + matched.length + ' karyawan'
+            : 'Tidak ada karyawan dengan role ini';
+        }
+      });
+
+      // Update counter global
+      const totalAll   = document.querySelectorAll('.perf-table tbody tr[data-i]').length;
+      const totalMatch = document.querySelectorAll('.perf-table tbody tr[data-i][data-role-match="1"]').length;
+      const ctr = document.getElementById('roleFilterCount');
+      if (currentRoleFilter !== 'all') {
+        // hitung ulang pakai dataset
+        const matchCount = [...document.querySelectorAll('.perf-table tbody tr[data-i]')]
+          .filter(r => r.dataset.roleMatch === '1').length;
+        ctr.textContent = matchCount + ' dari ' + totalAll + ' karyawan';
+        ctr.style.display = '';
+      } else {
+        ctr.textContent = '';
+        ctr.style.display = 'none';
+      }
+    }
+
+    /* ══ POPUP STORE ══ */
+    function openPopup(el) {
+      const nama      = el.dataset.nama  || el.textContent.trim();
+      const role      = el.dataset.role  || '-';
+      const storesRaw = el.dataset.stores || '[]';
+      let stores = [];
+      try { stores = JSON.parse(storesRaw); } catch(e) {
+        // fallback: coba bersihkan string Python list repr
+        try {
+          const cleaned = storesRaw.replace(/'/g, '"');
+          stores = JSON.parse(cleaned);
+        } catch(e2) { stores = []; }
+      }
+
+      document.getElementById('popupNama').textContent = nama;
+      const roleEl = document.getElementById('popupRole');
+      roleEl.textContent = (role && role !== '-') ? role : '';
+      roleEl.style.display = (role && role !== '-') ? '' : 'none';
+
+      const storesEl = document.getElementById('popupStores');
+      if (!stores || stores.length === 0) {
+        storesEl.innerHTML = '<p class="popup-no-store">Data store tidak tersedia. Jalankan Re-Cluster untuk memperbarui data.</p>';
+      } else {
+        storesEl.innerHTML = stores.map(s =>
+          `<span class="popup-store-chip">${s}</span>`
+        ).join('');
+      }
+
+      document.getElementById('popupOverlay').classList.add('open');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closePopup() {
+      document.getElementById('popupOverlay').classList.remove('open');
+      document.body.style.overflow = '';
+    }
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closePopup();
+    });
+
+    /* Attach popup ke semua nama trigger — klik nama karyawan langsung */
+    document.addEventListener('click', e => {
+      const trigger = e.target.closest('.nama-popup-trigger');
+      if (trigger) openPopup(trigger);
+    });
+  </script>
+
+  <style>
+    #section-main { display:flex; flex-direction:column; gap:20px; }
+    #section-area { display:flex; flex-direction:column; gap:20px; }
+    .area-result-section { margin-top: 16px; }
+    .area-result-section { margin-bottom: 8px; }
+
+    .area-filter-title { font-size:1.2rem; font-weight:700; color:#1a1a2e; margin:0 0 4px; }
+    .area-filter-sub   { font-size:.85rem; color:#888; margin:0 0 20px; }
+
+    .area-search-wrap  { position:relative; max-width:440px; }
+    .area-search-box   { display:flex; align-items:center; border:1.5px solid #e0e0e0;
+                         border-radius:12px; padding:10px 14px; gap:8px; background:#fafafa;
+                         transition:border-color .2s; }
+    .area-search-box:focus-within { border-color:#E91E8C; background:#fff; }
+    .area-search-input { flex:1; border:none; background:transparent; font-size:.9rem;
+                         font-family:inherit; outline:none; color:#1a1a2e; }
+    .area-search-clear { background:none; border:none; cursor:pointer; color:#aaa; font-size:.85rem; padding:0; }
+    .area-search-clear:hover { color:#E91E8C; }
+
+    .area-dropdown { position:absolute; top:calc(100% + 6px); left:0; right:0;
+                     background:#fff; border:1.5px solid #e0e0e0; border-radius:12px;
+                     box-shadow:0 8px 24px rgba(0,0,0,.10); max-height:260px;
+                     overflow-y:auto; z-index:200; display:none; }
+    .area-dropdown.open { display:block; }
+    .area-dd-item  { padding:10px 16px; font-size:.875rem; cursor:pointer; color:#333; transition:background .15s; }
+    .area-dd-item:hover { background:#fce4f3; color:#E91E8C; }
+
+    .area-chips     { display:flex; align-items:center; gap:8px; margin-top:14px; flex-wrap:wrap; }
+    .area-chip-label{ font-size:.8rem; color:#888; }
+    .area-chip-val  { background:#fce4f3; color:#E91E8C; border:1px solid #f9a8d4;
+                      border-radius:20px; padding:3px 12px; font-size:.82rem; font-weight:600; }
+    .area-chip-clear{ background:none; border:1px solid #e0e0e0; border-radius:20px;
+                      padding:3px 10px; font-size:.78rem; cursor:pointer; color:#888; transition:all .15s; }
+    .area-chip-clear:hover { border-color:#E91E8C; color:#E91E8C; }
+
+    .area-placeholder      { display:flex; justify-content:center; padding:60px 0; }
+    .area-placeholder-inner{ text-align:center; color:#bbb; }
+    .area-placeholder-icon { font-size:2.5rem; display:block; margin-bottom:10px; }
+    .area-empty            { text-align:center; padding:40px; color:#aaa; font-size:.9rem; }
+
+    .area-stat-pill { display:flex; align-items:center; gap:7px; border:1.5px solid #eee;
+                      border-radius:12px; padding:8px 14px; font-size:12.5px;
+                      font-weight:500; color:#444; flex-wrap:wrap; }
+    .area-stat-dot  { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+    .area-stat-tier { font-weight:700; color:#1a1a2e; margin-right:2px; }
+    .area-stat-sep  { color:#ccc; }
+    .area-stat-pill strong { color:#E91E8C; }
+
+    .region-tag { background:#ede9fe; color:#6d28d9; border-radius:6px;
+                  padding:2px 8px; font-size:.75rem; font-weight:600; white-space:nowrap; }
+
+    /* ══ ROLE TAG ══ */
+    .role-tag {
+      display: inline-block;
+      border-radius: 6px;
+      padding: 2px 9px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+      letter-spacing: .2px;
+    }
+    .role-tag.role-md_mix { background: #fce7f3; color: #9d174d; border: 1px solid #f9a8d4; }
+    .role-tag.role-md_mm  { background: #eff6ff; color: #1d4ed8; border: 1px solid #93c5fd; }
+    .role-tag.role-md_reg { background: #f0fdf4; color: #15803d; border: 1px solid #86efac; }
+    .role-tag              { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+
+    /* ══ FILTER ROLE BAR ══ */
+    .role-filter-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 10px 0 4px;
+      border-top: 1px solid #f0e4ec;
+      margin-top: 12px;
+    }
+    .role-filter-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #888;
+    }
+    .role-btn {
+      padding: 4px 14px;
+      border-radius: 20px;
+      border: 1.5px solid #e0e0e0;
+      background: #fff;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      color: #555;
+      transition: all .15s;
+    }
+    .role-btn:hover  { border-color: #E91E8C; color: #E91E8C; }
+    .role-btn.active { background: #E91E8C; color: #fff; border-color: #E91E8C; }
+    .role-filter-count {
+      font-size: 11.5px;
+      color: #E91E8C;
+      font-weight: 700;
+      margin-left: 4px;
+    }
+
+    /* ══ NAMA POPUP TRIGGER ══ */
+    .nama-popup-trigger {
+      cursor: pointer;
+      font-weight: 600;
+      color: #1a1a2e;
+      transition: color .15s;
+      position: relative;
+    }
+    .nama-popup-trigger:hover {
+      color: #E91E8C;
+      text-decoration: underline;
+      text-decoration-style: dotted;
+      text-underline-offset: 3px;
+    }
+
+    /* ══ POPUP OVERLAY & CARD ══ */
+    .popup-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.35);
+      z-index: 999;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      backdrop-filter: blur(2px);
+    }
+    .popup-overlay.open { display: flex; }
+
+    .popup-card {
+      background: #fff;
+      border-radius: 18px;
+      box-shadow: 0 12px 48px rgba(200,24,91,.18);
+      width: 100%;
+      max-width: 480px;
+      max-height: 80vh;
+      overflow-y: auto;
+      animation: popupIn .22s cubic-bezier(.34,1.56,.64,1);
+    }
+    @keyframes popupIn {
+      from { transform: scale(.88); opacity: 0; }
+      to   { transform: scale(1);   opacity: 1; }
+    }
+
+    .popup-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 20px 22px 14px;
+      border-bottom: 1px solid #f0e4ec;
+    }
+    .popup-nama {
+      font-size: 1rem;
+      font-weight: 800;
+      color: #1a1a2e;
+      margin: 0 0 4px;
+      line-height: 1.3;
+    }
+    .popup-role {
+      font-size: 11px;
+      font-weight: 700;
+      color: #E91E8C;
+      background: #fce4f3;
+      border-radius: 20px;
+      padding: 2px 10px;
+    }
+    .popup-close {
+      background: #f5f5f5;
+      border: none;
+      border-radius: 50%;
+      width: 30px; height: 30px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #666;
+      flex-shrink: 0;
+      transition: background .15s;
+    }
+    .popup-close:hover { background: #fce4f3; color: #E91E8C; }
+
+    .popup-body { padding: 16px 22px 22px; }
+    .popup-section-title {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: #888;
+      margin: 0 0 12px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+    .popup-stores {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .popup-store-chip {
+      background: #f3f0ff;
+      color: #4f46e5;
+      border: 1px solid #c7d2fe;
+      border-radius: 8px;
+      padding: 5px 12px;
+      font-size: 12.5px;
+      font-weight: 600;
+    }
+    .popup-no-store {
+      color: #aaa;
+      font-size: 13px;
+      font-style: italic;
+    }
+  </style>
+
+</body>
+</html>

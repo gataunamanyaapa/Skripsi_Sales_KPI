@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Gelatik — Memproses…</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --pink:#E91E8C;--pink-light:#FCE4EC;--pink-dark:#C2185B;
+      --bg:#FDE8F2;--white:#fff;--text:#1A1A2E;--mid:#555577;--light:#9098B1;
+      --font:'Plus Jakarta Sans',sans-serif;
+    }
+    body{font-family:var(--font);background:var(--bg);min-height:100vh;
+         display:flex;align-items:center;justify-content:center;}
+
+    .card{
+      background:var(--white);border-radius:20px;
+      box-shadow:0 4px 32px rgba(200,24,91,0.12);
+      padding:48px 56px;text-align:center;
+      display:flex;flex-direction:column;align-items:center;gap:20px;
+      max-width:480px;width:90%;
+    }
+
+    /* Logo */
+    .logo{height:40px;object-fit:contain;margin-bottom:4px;}
+
+    /* Spinner ring */
+    .spinner-wrap{position:relative;width:72px;height:72px;}
+    .spinner{
+      width:72px;height:72px;
+      border:5px solid var(--pink-light);
+      border-top:5px solid var(--pink);
+      border-radius:50%;
+      animation:spin 1s linear infinite;
+    }
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    h1{font-size:22px;font-weight:800;color:var(--text);}
+    .sub{font-size:14px;color:var(--mid);font-weight:500;min-height:22px;}
+
+    /* Progress bar */
+    .progress-wrap{
+      width:100%;background:#F0EEF5;
+      border-radius:8px;height:10px;overflow:hidden;
+    }
+    .progress-fill{
+      height:100%;background:var(--pink);
+      border-radius:8px;
+      transition:width 0.5s ease;
+    }
+    .progress-pct{
+      font-size:13px;font-weight:700;color:var(--pink-dark);
+    }
+
+    /* Steps */
+    .steps{
+      display:flex;flex-direction:column;gap:8px;
+      text-align:left;width:100%;
+      margin-top:4px;
+    }
+    .step{
+      display:flex;align-items:center;gap:10px;
+      font-size:13px;color:var(--light);font-weight:500;
+      padding:7px 12px;border-radius:8px;
+      transition:all 0.3s;
+    }
+    .step.active{color:var(--text);background:var(--pink-light);font-weight:700;}
+    .step.done{color:#15803d;}
+    .step-dot{
+      width:10px;height:10px;border-radius:50%;
+      background:currentColor;flex-shrink:0;
+      transition:background 0.3s;
+    }
+    .step.active .step-dot{background:var(--pink);animation:pulse 1s ease infinite;}
+    .step.done .step-dot{background:#22c55e;}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+
+    /* Error state */
+    .error-box{
+      display:none;
+      background:#fff1f2;border:1.5px solid #fca5a5;
+      border-radius:10px;padding:14px 18px;
+      color:#b91c1c;font-size:13.5px;font-weight:600;
+      text-align:left;width:100%;
+    }
+
+    .btn-retry{
+      display:inline-block;margin-top:4px;
+      padding:10px 28px;border-radius:10px;
+      background:var(--pink);color:#fff;
+      font-family:var(--font);font-size:14px;font-weight:700;
+      border:none;cursor:pointer;text-decoration:none;
+      transition:filter .18s;
+    }
+    .btn-retry:hover{filter:brightness(0.9);}
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <img src="/static/logo gelatik (2).png" alt="Gelatik" class="logo"
+       onerror="this.style.display='none'"/>
+
+  <div class="spinner-wrap">
+    <div class="spinner" id="spinner"></div>
+  </div>
+
+  <h1 id="title">Memproses Data…</h1>
+  <p class="sub" id="statusMsg">{{ message or 'Memulai…' }}</p>
+
+  <div class="progress-wrap">
+    <div class="progress-fill" id="progressFill"
+         style="width:{{ progress or 0 }}%"></div>
+  </div>
+  <span class="progress-pct" id="progressPct">{{ progress or 0 }}%</span>
+
+  <div class="steps" id="stepList">
+    <div class="step" id="s1"><span class="step-dot"></span>Membaca data CSV</div>
+    <div class="step" id="s2"><span class="step-dot"></span>Preprocessing &amp; Scaling</div>
+    <div class="step" id="s3"><span class="step-dot"></span>Training K-Means </div>
+    <div class="step" id="s4"><span class="step-dot"></span>Evaluasi model</div>
+    <div class="step" id="s5"><span class="step-dot"></span>Menyimpan hasil Excel</div>
+  </div>
+
+  <div class="error-box" id="errorBox"></div>
+  <a href="/" class="btn-retry" id="btnRetry" style="display:none">↩ Kembali ke Dashboard</a>
+</div>
+
+<script>
+  const STEPS = [
+    { id: 's1', min: 0,  max: 30  },
+    { id: 's2', min: 30, max: 55  },
+    { id: 's3', min: 55, max: 75  },
+    { id: 's4', min: 75, max: 92  },
+    { id: 's5', min: 92, max: 100 },
+  ];
+
+  function updateSteps(progress) {
+    STEPS.forEach(s => {
+      const el = document.getElementById(s.id);
+      el.className = 'step';
+      if (progress >= s.max)       el.classList.add('done');
+      else if (progress >= s.min)  el.classList.add('active');
+    });
+  }
+
+  let pollTimer;
+
+  function poll() {
+    fetch('/status')
+      .then(r => r.json())
+      .then(data => {
+        const pct = data.progress || 0;
+        document.getElementById('progressFill').style.width = pct + '%';
+        document.getElementById('progressPct').textContent  = pct + '%';
+        document.getElementById('statusMsg').textContent    = data.message || '';
+        updateSteps(pct);
+
+        if (data.state === 'done') {
+          clearInterval(pollTimer);
+          // Redirect ke dashboard setelah 800ms
+          setTimeout(() => { window.location.href = '/'; }, 800);
+        } else if (data.state === 'error') {
+          clearInterval(pollTimer);
+          document.getElementById('spinner').style.borderTopColor = '#ef4444';
+          document.getElementById('title').textContent = 'Terjadi Kesalahan';
+          const eb = document.getElementById('errorBox');
+          eb.textContent = data.message || 'Error tidak diketahui.';
+          eb.style.display = 'block';
+          document.getElementById('btnRetry').style.display = 'inline-block';
+        }
+      })
+      .catch(() => {
+        // Server sedang restart atau offline — coba lagi
+      });
+  }
+
+  // Mulai polling setiap 1 detik
+  updateSteps({{ progress or 0 }});
+  pollTimer = setInterval(poll, 1000);
+  poll();   // panggil langsung sekali
+</script>
+</body>
+</html>

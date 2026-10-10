@@ -1,0 +1,40 @@
+{
+  "k": 2,
+  "output_file": "hasil_clustering_k2.xlsx",
+  "active_features": [
+    "visit_count",
+    "Facing",
+    "Is FIFO/FEFO",
+    "Is Price Tag Available"
+  ],
+  "excluded_features": [],
+  "k_selection": {
+    "silhouette": 2,
+    "davies_bouldin": 2,
+    "calinski_harabasz": 2,
+    "winner": 2
+  },
+  "cluster_labels": {
+    "0": "High Visit Low KPI",
+    "1": "Low Visit High KPI"
+  },
+  "label_order": [
+    "High Visit Low KPI",
+    "Low Visit High KPI"
+  ],
+  "cluster_stats": {
+    "High Visit Low KPI": {
+      "visit_mean": 8534.4,
+      "kpi_mean": 0.3635
+    },
+    "Low Visit High KPI": {
+      "visit_mean": 4564.0,
+      "kpi_mean": 0.6742
+    }
+  },
+  "silhouette_score": 0.6179,
+  "davies_bouldin": 0.5409,
+  "calinski_harabasz": 89.61,
+  "inertia": 5.24,
+  "n_karyawan": 80
+}

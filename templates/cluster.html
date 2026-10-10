@@ -1,0 +1,21 @@
+<h2>Rata-rata KPI per Cluster</h2>
+
+<table border="1">
+  <tr>
+    <th>Cluster</th>
+    <th>Visit</th>
+    <th>Facing</th>
+    <th>FIFO</th>
+    <th>Price Tag</th>
+  </tr>
+
+  {% for row in tables %}
+  <tr>
+    <td>{{ row.cluster_k2 }}</td>
+    <td>{{ row.visit_count }}</td>
+    <td>{{ row.Facing }}</td>
+    <td>{{ row["Is FIFO/FEFO"] }}</td>
+    <td>{{ row["Is Price Tag Available"] }}</td>
+  </tr>
+  {% endfor %}
+</table>
