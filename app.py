@@ -27,7 +27,10 @@ def base(filename: str) -> str:
     return os.path.join(BASE_DIR, filename)
 
 # ── Path file ─────────────────────────────────────────────────
-RAW_DATA_PATH = base("Report_Clean.xlsx")
+RAW_DATA_PATH = next(
+    (base(f) for f in ("Report.csv", "Report.xlsx") if os.path.exists(base(f))),
+    base("Report.csv"),
+)
 META_PATH     = base("cluster_meta.json")
 STATUS_PATH   = base("cluster_status.json")
 
@@ -188,6 +191,37 @@ def _get_tier_interpretation(label: str, rank: int, total_k: int) -> dict:
     return _tier_generic_interp(label, rank, total_k)
 
 
+# ════════════════════════════════════════════════════════════
+# HELPER BACA CSV (auto-deteksi separator + fallback encoding)
+# ════════════════════════════════════════════════════════════
+
+def read_csv_flexible(path: str, nrows=None) -> pd.DataFrame:
+    """
+    Baca CSV dengan separator otomatis (sep=None -> engine python).
+    CATATAN: 'low_memory' TIDAK didukung engine 'python', jadi tidak dipakai.
+    """
+    last_err = None
+    for enc in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            return pd.read_csv(path, sep=None, engine="python",
+                               encoding=enc, nrows=nrows)
+        except UnicodeDecodeError as e:
+            last_err = e
+            continue
+        except Exception as e:
+            # Fallback: coba koma lalu titik-koma dengan engine C
+            last_err = e
+            for sep in (",", ";", "\t"):
+                try:
+                    df = pd.read_csv(path, sep=sep, encoding=enc,
+                                     nrows=nrows, low_memory=False)
+                    if df.shape[1] > 1:
+                        return df
+                except Exception as e2:
+                    last_err = e2
+    raise last_err
+
+
 # ── Lock ─────────────────────────────────────────────────────
 _cluster_lock = threading.Lock()
 
@@ -244,7 +278,7 @@ def _run_clustering_task(source_path: str):
         if ext in (".xlsx", ".xls"):
             df = pd.read_excel(source_path, engine="openpyxl")
         else:
-            df = pd.read_csv(source_path, low_memory=False, sep=None, engine="python")
+            df = read_csv_flexible(source_path)
 
         required = {"Username", "Report Product", "Facing",
                     "Is FIFO/FEFO", "Is Price Tag Available"}
@@ -756,7 +790,7 @@ def recluster():
         return redirect(url_for("dashboard"))
 
     if not os.path.exists(RAW_DATA_PATH):
-        flash(f"❌ File Report_Clean.xlsx tidak ditemukan di folder: {BASE_DIR}", "error")
+        flash(f"❌ File Report.csv / Report.xlsx tidak ditemukan di folder: {BASE_DIR}", "error")
         return redirect(url_for("dashboard"))
 
     import glob
@@ -803,7 +837,7 @@ def import_file():
         f.save(tmp_path)
 
         if is_csv:
-            df_check = pd.read_csv(tmp_path, nrows=5, low_memory=False, sep=None, engine="python")
+            df_check = read_csv_flexible(tmp_path, nrows=5)
         else:
             df_check = pd.read_excel(tmp_path, engine="openpyxl", nrows=5)
 
