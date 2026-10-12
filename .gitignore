@@ -1,0 +1,16 @@
+
+# Temporary import files
+_import_tmp.xlsx
+_import_tmp.csv
+
+# Large report files
+Report.csv
+data/Report.csv
+
+# Python virtual environment
+venv/
+__pycache__/
+*.pyc
+
+# Environment variables
+.env
